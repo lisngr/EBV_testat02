@@ -52,6 +52,10 @@ void ProcessFrame()
 		Erode_3x3(THRESHOLD, INDEX0);
 		Dilate_3x3(INDEX0, THRESHOLD);
 
+		DetectRegions();
+
+
+
 
 		/*
 		//example for drawing output
@@ -88,25 +92,33 @@ void Binarize() {
 //unsigned char OtsuThreshold(int InIndex){
 //	float Hist[256];
 //	unsigned char* p = data.u8TempImage[InIndex];
-//	float best;
-//	float w0, mu0, w1, mu1 =  0.0f;
-//	int K =
+//	int K;
 //
 //	memset(Hist, 0, sizeof(Hist));
 //
-//	for(int i1 = 0; i1 <= K; i1++) {
-//		w0 += Hist[i1];
-//		mu0 += (Hist[i1]*i1);
-//	}
-//	for(int i1; i1 <= 255; i1++) {
-//		w1 += Hist[i1];
-//		mu1 += (Hist[i1]*i1);
-//	}
+//	for(K=0, K < 255, K++){
+//		float best;
+//		float w0, mu0, w1, mu1 = 0;
+//		int i1;
+//		for(i1 = 0; i1 <= K; i1++) {
+//			w0 += Hist[i1];
+//			mu0 += (Hist[i1]*i1);
+//		}
+//		for(i1; i1 <= 255; i1++) {
+//			w1 += Hist[i1];
+//			mu1 += (Hist[i1]*i1);
+//		}
 //		//do normalization of average values
 //		mu0 /= w0;
 //		mu1 /= w1;
 //
-//return K
+//		K = w0*w1*(m0 − m1)*(m0-m1);
+//		best = (K<best) ? best : K;
+//	}
+
+	return best
+}
+
 
 
 void Erode_3x3(int InIndex, int OutIndex) {
@@ -139,6 +151,31 @@ void Dilate_3x3(int InIndex, int OutIndex){
 					*(p+nc-1) | *(p+nc) | *(p+nc+1);
 		}
 	}
+}
+
+
+void DetectRegions(){
+	// Convert Range of Foreground Picture [0 255] to [0 1] for OSCar Functions
+
+	for(int i = 0; i < IMG_SIZE; i++) {
+		data.u8TempImage[INDEX0][i] = data.u8TempImage[THRESHOLD][i] ? 1 : 0;
+	}
+
+	// new OSCar Picture Data structure
+	struct OSC_PICTURE Pic;
+	Pic.data = data.u8TempImage[INDEX0];
+	Pic.width = nc;
+	Pic.height = nr;
+	Pic.type = OSC_PICTURE_BINARY;
+
+	// Data structure for Region Labeling
+	struct OSC_VIS_REGIONS ImgRegions;
+
+	OscVisLabelBinary(&Pic, &ImgRegions);
+	OscVisGetRegionProperties(&ImgRegions);
+
+	DrawBoundingBox(ImRegions.bboxLeft, ImRegions.bboxBottom, ImRegions.bboxRight, ImRegions.bboxTop, bool recFill, YELLOW)
+
 }
 
 
