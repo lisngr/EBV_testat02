@@ -34,9 +34,11 @@ unsigned char OtsuThreshold(int InIndex);
 void Binarize(unsigned char threshold);
 void Erode_3x3(int InIndex, int OutIndex);
 void Dilate_3x3(int InIndex, int OutIndex);
-void DetectRegions();
-void DrawBoundingBoxes();
-
+void DetectRegions(void);
+void DrawBoundingBoxes(int*);
+void ChangeDetection(void);
+void ConvRGB2YCbCr(void);
+int* getDominantColor(void);
 
 void ResetProcess()
 {
@@ -49,6 +51,7 @@ void ResetProcess()
 
 
 void ProcessFrame() {
+
 	//initialize counters
 	if(data.ipc.state.nStepCounter == 1) {
 		ManualThreshold = false;
@@ -60,9 +63,11 @@ void ProcessFrame() {
 		Erode_3x3(THRESHOLD, INDEX0);
 		Dilate_3x3(INDEX0, THRESHOLD);
 
+		ChangeDetection();
+
 		DetectRegions();
 
-		DrawBoundingBoxes();
+		DrawBoundingBoxes(getDominantColor());
 
 		if(ManualThreshold) {
 			char Text[] = "manual threshold";
@@ -71,6 +76,7 @@ void ProcessFrame() {
 			char Text[] = " Otsu's threshold";
 			DrawString(20, 20, strlen(Text), SMALL, CYAN, Text);
 		}
+
 	}
 }
 
@@ -178,7 +184,7 @@ void DetectRegions() {
 
 	//set pixel value to 1 in INDEX0 because the image MUST be binary (i.e. values of 0 and 1)
 	for(i = 0; i < IMG_SIZE; i++) {
-		data.u8TempImage[INDEX0][i] = data.u8TempImage[THRESHOLD][i] ? 1 : 0;
+		data.u8TempImage[INDEX0][i] = data.u8TempImage[INDEX1][i] ? 1 : 0;
 	}
 
 	//wrap image INDEX0 in picture struct
@@ -193,20 +199,147 @@ void DetectRegions() {
 }
 
 
-void DrawBoundingBoxes() {
+void DrawBoundingBoxes(int* color) {
 	uint16 o;
 	for(o = 0; o < ImgRegions.noOfObjects; o++) {
 		if(ImgRegions.objects[o].area > MinArea) {
 			DrawBoundingBox(ImgRegions.objects[o].bboxLeft, ImgRegions.objects[o].bboxTop,
-							ImgRegions.objects[o].bboxRight, ImgRegions.objects[o].bboxBottom, false, GREEN);
+							ImgRegions.objects[o].bboxRight, ImgRegions.objects[o].bboxBottom, false, color[o]);
 
 			DrawLine(ImgRegions.objects[o].centroidX-SizeCross, ImgRegions.objects[o].centroidY,
-					 ImgRegions.objects[o].centroidX+SizeCross, ImgRegions.objects[o].centroidY, RED);
+					 ImgRegions.objects[o].centroidX+SizeCross, ImgRegions.objects[o].centroidY, color[o]);
 			DrawLine(ImgRegions.objects[o].centroidX, ImgRegions.objects[o].centroidY-SizeCross,
-								 ImgRegions.objects[o].centroidX, ImgRegions.objects[o].centroidY+SizeCross, RED);
+								 ImgRegions.objects[o].centroidX, ImgRegions.objects[o].centroidY+SizeCross, color[o]);
 
 		}
 	}
 }
 
+void ChangeDetection() {
+	const int NumFgrCol = 2;
+	uint8 FgrCol[NumFgrCol][NUM_COLORS];
+	int r=0, c=0, frg=0, p=0;
+
+
+
+	memset(data.u8TempImage[INDEX0], 0, IMG_SIZE);
+	memset(data.u8TempImage[INDEX1], 0, IMG_SIZE);
+	memset(data.u8TempImage[BACKGROUND], 0, IMG_SIZE);
+	memset(data.u8TempImage[THRESHOLD], 0, IMG_SIZE);
+
+	ConvRGB2YCbCr();
+
+	FgrCol[0][0] = 29;
+	FgrCol[0][1] = 152;
+	FgrCol[0][2] = 108;
+	FgrCol[1][0] = 48;
+	FgrCol[1][1] = 112;
+	FgrCol[1][2] = 180;
+
+
+	//loop over the rows
+	for(r = 0; r < nr*nc; r += nc) {
+		//loop over the columns
+		for(c = 0; c < nc; c++) {
+			//loop over the different Fgr colors and find smallest difference
+			int MinDif = 1 << 30; // bcause of unsigned
+			int MinInd = 0;
+			for(frg = 0; frg < NumFgrCol; frg++) {
+				int Dif = 0;
+				//loop over the color planes (r, g, b) and sum up the difference
+				for(p = 1; p < NUM_COLORS; p++) {
+					Dif += abs((int) data.u8TempImage[THRESHOLD][(r+c)*NUM_COLORS+p]-
+							(int) FgrCol[frg][p]);
+				}
+				if(Dif < MinDif) {
+					MinDif = Dif;
+					MinInd = frg;
+				}
+			}
+			//if the difference is smaller than threshold value
+			if(MinDif < data.ipc.state.nThreshold) {
+				//set pixel value to 255 in THRESHOLD image for further processing
+				//(we use only the first third of the image buffer)
+				data.u8TempImage[INDEX1][(r+c)] = 255;
+				//set pixel value to Fgr color in BACKGROUND image for visualization
+				for(p = 1; p < NUM_COLORS; p++) {
+					data.u8TempImage[BACKGROUND][(r+c)*NUM_COLORS+p] = FgrCol[MinInd][p];
+				}
+			}
+		}
+	}
+}
+
+
+void ConvRGB2YCbCr(){
+
+	int r, c;
+
+	for(r = 0; r < nr*nc; r += nc) {
+		//loop over the columns
+		for(c = 0; c < nc; c++) {
+			//get rgb values (order is actually bgr!)
+			float B_ = data.u8TempImage[SENSORIMG][(r+c)*NUM_COLORS+0];
+			float G_ = data.u8TempImage[SENSORIMG][(r+c)*NUM_COLORS+1];
+			float R_ = data.u8TempImage[SENSORIMG][(r+c)*NUM_COLORS+2];
+			uint8 Y_ = (uint8) ( 0 + 0.299*R_ + 0.587*G_ + 0.114*B_);
+			uint8 Cb_ = (uint8) (128 - 0.169*R_ - 0.331*G_ + 0.500*B_);
+			uint8 Cr_ = (uint8) (128 + 0.500*R_ - 0.419*G_ - 0.081*B_);
+			//we write result to XXX
+			data.u8TempImage[THRESHOLD][(r+c)*NUM_COLORS+0] = Y_;
+			data.u8TempImage[THRESHOLD][(r+c)*NUM_COLORS+1] = Cb_;
+			data.u8TempImage[THRESHOLD][(r+c)*NUM_COLORS+2] = Cr_;
+		}
+	}
+}
+
+int* getDominantColor(){
+
+	int o, c, p, i=0;
+
+	int Hist[NUM_COLORS][256];
+	int best[2];
+	int best_i[2];
+	int CurCol[ImgRegions.noOfObjects];
+
+	memset(Hist, 0, 2*256*sizeof(int));
+	memset(CurCol, 0, ImgRegions.noOfObjects*sizeof(int));
+	memset(best, 0, 2*sizeof(int));
+	memset(best_i, 0, 2*sizeof(int));
+
+	//loop over objects
+	for(o = 0; o < ImgRegions.noOfObjects; o++) {
+		//get pointer to root run of current object
+		struct OSC_VIS_REGIONS_RUN* currentRun = ImgRegions.objects[o].root;
+		//loop over runs of current object
+		do {
+			//loop over pixel of current run
+			for(c = currentRun->startColumn; c <= currentRun->endColumn; c++) {
+				int r = currentRun->row;
+				//loop over color planes of pixel
+				for(p = 0; p < NUM_COLORS-1; p++) {
+					//addressing individual pixel at row r, column c and color p
+					Hist[p][data.u8TempImage[THRESHOLD][(r*nc+c)*NUM_COLORS+p+1]]++;
+//					if(best[p-1] < Hist[p-1][data.u8TempImage[THRESHOLD][(r*nc+c)*NUM_COLORS+p]]){
+//						best[p-1] = Hist[p-1][data.u8TempImage[THRESHOLD][(r*nc+c)*NUM_COLORS+p]];
+//						best_i[p-1] = Hist[p-1][data.u8TempImage[THRESHOLD][(r*nc+c)*NUM_COLORS+p]];
+//					}
+				}
+			}
+			currentRun = currentRun->next; //get next run of current object
+		} while(currentRun != NULL); //end of current object
+
+		for(i=0;i<256;i++){
+			if(Hist[0][i] > Hist[0][best_i[0]]){
+				best_i[0]=i;
+			}
+			if(Hist[1][i] > Hist[1][best_i[1]]){
+				best_i[1]=i;
+			}
+		}
+		if((best_i[0] < 128)) CurCol[o] = RED;
+		else CurCol[o] = BLUE;
+	}
+	return CurCol;
+}
 

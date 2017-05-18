@@ -268,6 +268,7 @@ Msg const *MainState_ShowBackground(MainState *me, Msg *msg)
 	case IPC_GET_NEW_IMG_EVT:
 	{
 		uint32 AddInfoSize = 0;
+		//ChangeDetection();
 		/* Write out the current gray image to the address space of the CGI. */
 		memcpy(data.ipc.req.pAddr, data.u8TempImage[BACKGROUND], sizeof(data.u8TempImage[BACKGROUND]));
 		/* always copy the size of the additional data buffer (because it is read in cgi.c */
